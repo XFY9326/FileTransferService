@@ -1,15 +1,17 @@
 """
 Shared types, dataclasses, msgpack helpers, sha1 utilities, and exceptions.
 """
+
 from __future__ import annotations
 
 import hashlib
 import time
 import uuid
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, Set
 
 import msgpack
+import websockets
 
 
 # ---------- Utilities ----------
@@ -31,7 +33,7 @@ def sha1_hex(data: bytes) -> str:
 # ---------- MsgPack helpers ----------
 def pack(msg: Dict[str, Any]) -> bytes:
     # Use use_bin_type True for bytes support
-    return msgpack.packb(msg, use_bin_type=True)
+    return msgpack.packb(msg, use_bin_type=True)  # type: ignore
 
 
 def unpack(b: bytes) -> Dict[str, Any]:
@@ -42,8 +44,8 @@ def unpack(b: bytes) -> Dict[str, Any]:
 @dataclass
 class SessionInfo:
     code: str
-    receiver_ws: Any  # WebSocketServerProtocol or client protocol
-    sender_ws: Any | None
+    receiver_ws: websockets.ServerConnection
+    sender_ws: websockets.ServerConnection | None
     last_active: float
     meta: Dict[str, Any] | None = None  # optional small in-memory metadata
     lock: Any | None = None  # placeholder for per-session lock if needed

@@ -55,7 +55,6 @@ per-chunk SHA-1, and robust retries are supported.
 ```
 Assigned session code: 1234. Waiting for sender...
 meta_response sent. missing_chunks=1024
-ACK sent for chunk 0
 ...
 Transfer complete, saved myfile.bin
 ```

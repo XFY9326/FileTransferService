@@ -7,6 +7,7 @@ Receiver CLI.
 - When all chunks received, do final verification, rename .tmp -> filename and delete .meta, send finish success.
 - All messages are msgpack (binary frames).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,10 +23,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 import config
 from common import (
-    pack,
-    unpack,
     FileMeta,
+    pack,
     sha1_hex,
+    unpack,
 )
 
 # configure logger
@@ -40,7 +41,7 @@ async def save_meta(meta_path: pathlib.Path, meta: FileMeta) -> None:
     # persist meta as msgpack
     data = meta.to_dict()
     async with aiofiles.open(meta_path, "wb") as f:
-        await f.write(msgpack.packb(data, use_bin_type=True))
+        await f.write(msgpack.packb(data, use_bin_type=True))  # type: ignore
 
 
 async def load_meta(meta_path: pathlib.Path) -> FileMeta:
@@ -50,7 +51,10 @@ async def load_meta(meta_path: pathlib.Path) -> FileMeta:
     return FileMeta.from_dict(d)
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=config.TENACITY_BACKOFF_BASE))
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=config.TENACITY_BACKOFF_BASE),
+)
 async def aio_write_at(path: pathlib.Path, offset: int, data: bytes) -> None:
     # Retry wrapper for file IO
     # Open r+b if exists else wb+
@@ -66,7 +70,7 @@ async def handle_session(server_uri: str) -> None:
         await ws.send(pack({"type": "role", "role": "receiver"}))
         # wait for session assignment
         raw = await ws.recv()
-        msg = unpack(raw if isinstance(raw, (bytes, bytearray)) else raw.encode())
+        msg = unpack(raw if isinstance(raw, (bytes, bytearray)) else raw.encode())  # type: ignore
         if msg.get("type") != "session" or "code" not in msg:
             logger.error("Didn't receive session assignment: {}", msg)
             return
@@ -103,7 +107,15 @@ async def handle_session(server_uri: str) -> None:
                 tmp_path = target_path.with_suffix(target_path.suffix + TMP_SUFFIX)
                 # Check if final file exists
                 if target_path.exists():
-                    await ws.send(pack({"type": "meta_response", "status": "error", "message": "file exists"}))
+                    await ws.send(
+                        pack(
+                            {
+                                "type": "meta_response",
+                                "status": "error",
+                                "message": "file exists",
+                            }
+                        )
+                    )
                     logger.info("File exists: {}. Informed sender.", target_path)
                     continue
                 # if meta exists, load it
@@ -114,7 +126,9 @@ async def handle_session(server_uri: str) -> None:
                         # ensure file_id matches
                         if existing.file_id == fm.file_id:
                             fm = existing
-                            missing = [i for i in range(fm.chunks) if i not in fm.received]
+                            missing = [
+                                i for i in range(fm.chunks) if i not in fm.received
+                            ]
                         else:
                             # different file id -> start fresh
                             fm.received = set()
@@ -129,8 +143,21 @@ async def handle_session(server_uri: str) -> None:
 
                 file_meta = fm
                 await ws.send(
-                    pack({"type": "meta_response", "file_id": fm.file_id, "status": "ok", "missing_chunks": missing}))
-                logger.info("meta_response sent. missing_chunks={}", len(missing))
+                    pack(
+                        {
+                            "type": "meta_response",
+                            "file_id": fm.file_id,
+                            "status": "ok",
+                            "missing_chunks": missing,
+                        }
+                    )
+                )
+                logger.info(
+                    "File meta received: {} ({}/{} chunks)",
+                    file_meta.filename,
+                    len(file_meta.received),
+                    file_meta.chunks,
+                )
 
             elif t == "chunk":
                 if not file_meta:
@@ -150,9 +177,21 @@ async def handle_session(server_uri: str) -> None:
                 if actual != expected_sha1:
                     # send nack
                     await ws.send(
-                        pack({"type": "nack", "file_id": file_meta.file_id, "index": idx, "reason": "sha1 mismatch"}))
-                    logger.warning("Chunk {} sha1 mismatch (got {} expected {}). NACK sent.", idx, actual,
-                                   expected_sha1)
+                        pack(
+                            {
+                                "type": "nack",
+                                "file_id": file_meta.file_id,
+                                "index": idx,
+                                "reason": "sha1 mismatch",
+                            }
+                        )
+                    )
+                    logger.warning(
+                        "Chunk {} sha1 mismatch (got {} expected {}). NACK sent.",
+                        idx,
+                        actual,
+                        expected_sha1,
+                    )
                     continue
 
                 # write to tmp at offset
@@ -162,7 +201,15 @@ async def handle_session(server_uri: str) -> None:
                     except Exception as e:
                         logger.exception("Failed to write chunk {}: {}", idx, e)
                         await ws.send(
-                            pack({"type": "nack", "file_id": file_meta.file_id, "index": idx, "reason": "io error"}))
+                            pack(
+                                {
+                                    "type": "nack",
+                                    "file_id": file_meta.file_id,
+                                    "index": idx,
+                                    "reason": "io error",
+                                }
+                            )
+                        )
                         continue
 
                     # mark received and persist meta
@@ -170,25 +217,43 @@ async def handle_session(server_uri: str) -> None:
                     try:
                         await save_meta(meta_path, file_meta)
                     except Exception as e:
-                        logger.exception("Failed to persist meta for chunk {}: {}", idx, e)
+                        logger.exception(
+                            "Failed to persist meta for chunk {}: {}", idx, e
+                        )
                         # still ack so sender will not repeatedly send? We'll nack to force retry.
-                        await ws.send(pack({"type": "nack", "file_id": file_meta.file_id, "index": idx,
-                                            "reason": "meta persist error"}))
+                        await ws.send(
+                            pack(
+                                {
+                                    "type": "nack",
+                                    "file_id": file_meta.file_id,
+                                    "index": idx,
+                                    "reason": "meta persist error",
+                                }
+                            )
+                        )
                         file_meta.received.remove(idx)
                         continue
 
                 # send ack
-                await ws.send(pack({"type": "ack", "file_id": file_meta.file_id, "index": idx}))
-                logger.info("ACK sent for chunk {}", idx)
+                await ws.send(
+                    pack({"type": "ack", "file_id": file_meta.file_id, "index": idx})
+                )
 
                 # check completion
                 if len(file_meta.received) >= file_meta.chunks:
                     # final verification
-                    size_ok = tmp_path.exists() and tmp_path.stat().st_size == file_meta.size
+                    size_ok = (
+                            tmp_path.exists() and tmp_path.stat().st_size == file_meta.size
+                    )
                     if not size_ok:
-                        await ws.send(pack({"type": "error", "message": "final size mismatch"}))
-                        logger.error("Final size mismatch: expected {} actual {}", file_meta.size,
-                                     tmp_path.stat().st_size if tmp_path.exists() else -1)
+                        await ws.send(
+                            pack({"type": "error", "message": "final size mismatch"})
+                        )
+                        logger.error(
+                            "Final size mismatch: expected {} actual {}",
+                            file_meta.size,
+                            tmp_path.stat().st_size if tmp_path.exists() else -1,
+                        )
                         continue
                     # atomically rename tmp -> filename
                     try:
@@ -197,14 +262,33 @@ async def handle_session(server_uri: str) -> None:
                         try:
                             os.remove(meta_path)
                         except Exception as e:
-                            logger.warning("Failed to remove meta file {}: {}", meta_path, e)
-                        await ws.send(pack({"type": "finish", "file_id": file_meta.file_id, "status": "success"}))
+                            logger.warning(
+                                "Failed to remove meta file {}: {}", meta_path, e
+                            )
+                        await ws.send(
+                            pack(
+                                {
+                                    "type": "finish",
+                                    "file_id": file_meta.file_id,
+                                    "status": "success",
+                                }
+                            )
+                        )
                         logger.info("Transfer complete, saved {}", target_path)
                         # reset file_meta for next transfer
                         file_meta = None
                     except Exception as e:
                         logger.exception("Failed to finalize file move: {}", e)
-                        await ws.send(pack({"type": "error", "message": "finalize error"}))
+                        await ws.send(
+                            pack({"type": "error", "message": "finalize error"})
+                        )
+
+            elif t == "connection":
+                sender_address: str | None = msg.get("sender_address")
+                if sender_address is not None:
+                    logger.error("Sender address not exists!")
+                else:
+                    logger.info("Sender connected: {}", sender_address)
 
             elif t in ("ack", "nack", "finish", "error", "meta_response"):
                 # Normally receiver doesn't expect these from sender forwarded via server,

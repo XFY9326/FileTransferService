@@ -7,6 +7,7 @@ In-memory relay server.
 - Matches sender to receiver by code and forwards msgpack binary frames.
 - Reclaims sessions after SESSION_TTL_SECONDS inactivity.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -41,15 +42,19 @@ class RelayServer:
 
     async def start(self) -> None:
         logger.info("Starting relay server on {}:{}", self.host, self.port)
-        self.server = await websockets.serve(self.handler, self.host, self.port, max_size=None)
+        self.server = await websockets.serve(
+            self.handler, self.host, self.port, max_size=None
+        )
         self._sweeper_task = asyncio.create_task(self._sweep_sessions_loop())
         await self._stop.wait()
 
     async def stop(self) -> None:
         self._stop.set()
-        self.server.close()
-        await self.server.wait_closed()
-        self._sweeper_task.cancel()
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+        if self._sweeper_task:
+            self._sweeper_task.cancel()
 
     async def _sweep_sessions_loop(self) -> None:
         while True:
@@ -96,7 +101,9 @@ class RelayServer:
             if not isinstance(raw, (bytes, bytearray)):
                 # Expect msgpack binary
                 logger.warning("Handshake not binary from {}", peer)
-                await websocket.close(code=1002, reason="expected binary msgpack handshake")
+                await websocket.close(
+                    code=1002, reason="expected binary msgpack handshake"
+                )
                 return
             try:
                 msg = unpack(bytes(raw))
@@ -141,8 +148,14 @@ class RelayServer:
             code = gen_code()
             while code in self.sessions:
                 code = gen_code()
-            session = SessionInfo(code=code, receiver_ws=websocket, sender_ws=None, last_active=now_ts(), meta=None,
-                                  lock=asyncio.Lock())
+            session = SessionInfo(
+                code=code,
+                receiver_ws=websocket,
+                sender_ws=None,
+                last_active=now_ts(),
+                meta=None,
+                lock=asyncio.Lock(),
+            )
             self.sessions[code] = session
 
         # send session assignment
@@ -165,7 +178,9 @@ class RelayServer:
                     try:
                         await target.send(msg)
                     except Exception as e:
-                        logger.exception("Failed to forward receiver->sender for {}: {}", code, e)
+                        logger.exception(
+                            "Failed to forward receiver->sender for {}: {}", code, e
+                        )
                 # else: keep alive; no sender yet
         except websockets.ConnectionClosed:
             logger.info("Receiver disconnected for code {}", code)
@@ -183,7 +198,9 @@ class RelayServer:
                             pass
             logger.info("Session {} removed (receiver connection ended)", code)
 
-    async def _handle_sender(self, websocket: websockets.ServerConnection, code: str | None):
+    async def _handle_sender(
+            self, websocket: websockets.ServerConnection, code: str | None
+    ):
         if not code:
             await websocket.send(pack({"type": "error", "message": "missing code"}))
             await websocket.close()
@@ -191,15 +208,22 @@ class RelayServer:
         async with self.sessions_lock:
             session = self.sessions.get(code)
             if not session:
-                await websocket.send(pack({"type": "error", "message": "session not found"}))
+                await websocket.send(
+                    pack({"type": "error", "message": "session not found"})
+                )
                 await websocket.close()
                 return
             # attach sender
             session.sender_ws = websocket
             session.last_active = now_ts()
-            logger.info("Sender {} attached to session {}", websocket.remote_address, code)
+            logger.info(
+                "Sender {} attached to session {}", websocket.remote_address, code
+            )
 
         receiver = session.receiver_ws
+        await receiver.send(
+            pack({"type": "connection", "sender_address": websocket.remote_address})
+        )
 
         # notify both sides we have matched? optional
         try:
@@ -211,7 +235,9 @@ class RelayServer:
                 try:
                     await receiver.send(raw)
                 except Exception as e:
-                    logger.exception("Failed to forward sender->receiver for {}: {}", code, e)
+                    logger.exception(
+                        "Failed to forward sender->receiver for {}: {}", code, e
+                    )
         except websockets.ConnectionClosed:
             logger.info("Sender disconnected for {}", code)
         finally:

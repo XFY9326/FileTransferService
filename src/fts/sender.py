@@ -11,6 +11,7 @@ Sender CLI.
 - Retries per-chunk using tenacity on network or nack.
 - If user enters empty line as first prompt -> exit and close, server releases code.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,7 +26,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm.asyncio import tqdm
 
 import config
-from common import pack, unpack, sha1_hex
+from common import pack, sha1_hex, unpack
 
 # configure logger
 logger.remove()
@@ -39,7 +40,9 @@ class SenderClient:
         self.ack_events: Dict[int, asyncio.Event] = {}
         self.ack_status: Dict[int, bool] = {}
         self.lock = asyncio.Lock()
-        self.send_queue: asyncio.Queue[int] = asyncio.Queue(maxsize=config.QUEUE_MAXSIZE)
+        self.send_queue: asyncio.Queue[int] = asyncio.Queue(
+            maxsize=config.QUEUE_MAXSIZE
+        )
         self.in_flight_sem = asyncio.Semaphore(config.MAX_IN_FLIGHT)
         self.total_chunks = 0
         self.chunk_size = config.CHUNK_SIZE
@@ -48,8 +51,10 @@ class SenderClient:
         self.chunks_to_send: Set[int] = set()
 
         # tenacity parameters
-        self.tenacity_kwargs = dict(stop=stop_after_attempt(config.TENACITY_MAX_ATTEMPTS),
-                                    wait=wait_exponential(multiplier=config.TENACITY_BACKOFF_BASE))
+        self.tenacity_kwargs = dict(
+            stop=stop_after_attempt(config.TENACITY_MAX_ATTEMPTS),
+            wait=wait_exponential(multiplier=config.TENACITY_BACKOFF_BASE),
+        )
 
     async def run(self):
         async with websockets.connect(self.server_uri, max_size=None) as ws:
@@ -70,7 +75,12 @@ class SenderClient:
                     continue
 
                 # create file_id
-                fid = str(uuid.uuid4())
+                fid = str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"{p}_{p.stat().st_mtime_ns}_{p.stat().st_size}",
+                    )
+                )
                 self.file_id = fid
                 self.file_path = p
                 size = p.stat().st_size
@@ -80,14 +90,23 @@ class SenderClient:
                 self.chunk_size = chunk_size
 
                 # send meta
-                meta_msg = {"type": "meta", "file_id": fid, "filename": p.name, "size": int(size),
-                            "chunk_size": int(chunk_size), "chunks": int(chunks)}
+                meta_msg = {
+                    "type": "meta",
+                    "file_id": fid,
+                    "filename": p.name,
+                    "size": int(size),
+                    "chunk_size": int(chunk_size),
+                    "chunks": int(chunks),
+                }
                 await ws.send(pack(meta_msg))
 
                 # await meta_response
                 meta_resp_raw = await ws.recv()
                 meta_resp = unpack(
-                    meta_resp_raw if isinstance(meta_resp_raw, (bytes, bytearray)) else meta_resp_raw.encode())
+                    meta_resp_raw
+                    if isinstance(meta_resp_raw, (bytes, bytearray))
+                    else meta_resp_raw.encode()  # type: ignore
+                )
                 if meta_resp.get("type") != "meta_response":
                     logger.error("Unexpected response to meta: {}", meta_resp)
                     continue
@@ -96,7 +115,9 @@ class SenderClient:
                     msg = meta_resp.get("message", "")
                     if msg == "file exists":
                         # must prompt user to re-enter or cancel
-                        logger.warning("Receiver reports the file already exists on the destination.")
+                        logger.warning(
+                            "Receiver reports the file already exists on the destination."
+                        )
                         # force reinput
                         continue
                     else:
@@ -105,7 +126,9 @@ class SenderClient:
 
                 missing = meta_resp.get("missing_chunks", list(range(chunks)))
                 if not missing:
-                    logger.info("No missing chunks reported; file may already be present. Session finished.")
+                    logger.info(
+                        "No missing chunks reported; file may already be present. Session finished."
+                    )
                     continue
 
                 self.chunks_to_send = set(int(x) for x in missing)
@@ -117,15 +140,26 @@ class SenderClient:
                 # create tasks: listener for ACKs, workers, and producer to enqueue missing indexes
                 listener_task = asyncio.create_task(self._listener(ws))
                 producer_task = asyncio.create_task(self._producer())
-                workers = [asyncio.create_task(self._worker(ws, i)) for i in range(config.MAX_IN_FLIGHT)]
+                workers = [
+                    asyncio.create_task(self._worker(ws, i))
+                    for i in range(config.MAX_IN_FLIGHT)
+                ]
 
                 # progress bar using tqdm.asyncio
-                pbar = tqdm(total=len(self.chunks_to_send), desc=f"Sending {p.name}", unit="chunk")
+                pbar = tqdm(
+                    total=len(self.chunks_to_send),
+                    desc=f"Sending {p.name}",
+                    unit="chunk",
+                )
                 try:
                     # wait until all ack_events are set to True (success)
                     while True:
                         # check completed ACKs
-                        completed = sum(1 for idx in self.chunks_to_send if self.ack_status.get(idx, False))
+                        completed = sum(
+                            1
+                            for idx in self.chunks_to_send
+                            if self.ack_status.get(idx, False)
+                        )
                         pbar.n = completed
                         pbar.refresh()
                         if completed >= len(self.chunks_to_send):
@@ -146,7 +180,18 @@ class SenderClient:
                     self.chunks_to_send.clear()
 
                 logger.info(
-                    "File transfer (attempt) finished. You may send another file or press Enter on an empty line to exit.")
+                    "File transfer (attempt) finished. You may send another file or press Enter on an empty line to exit."
+                )
+
+    async def test_connection(self) -> bool:
+        """Test connection to the server."""
+        # noinspection PyBroadException
+        try:
+            async with websockets.connect(self.server_uri, max_size=None) as ws:
+                await ws.ping()
+            return True
+        except Exception:
+            return False
 
     async def _prompt_file_path(self) -> str:
         # Async input isn't standard; use thread to get input
@@ -154,7 +199,7 @@ class SenderClient:
 
     @staticmethod
     async def _sync_input() -> str:
-        prompt = 'Enter path to file to send (empty line to exit): '
+        prompt = "Enter path to file to send (empty line to exit): "
         try:
             loop = asyncio.get_event_loop()
             s = await loop.run_in_executor(None, input, prompt)
@@ -225,8 +270,12 @@ class SenderClient:
         except asyncio.CancelledError:
             return
 
-    @retry(**{"stop": stop_after_attempt(config.TENACITY_MAX_ATTEMPTS),
-              "wait": wait_exponential(multiplier=config.TENACITY_BACKOFF_BASE)})
+    @retry(
+        **{
+            "stop": stop_after_attempt(config.TENACITY_MAX_ATTEMPTS),
+            "wait": wait_exponential(multiplier=config.TENACITY_BACKOFF_BASE),
+        }
+    )
     async def _send_chunk_with_retries(self, ws, idx: int):
         # read chunk from file and attempt to send; wait for ack or raise error to trigger retry
         if self.file_path is None or self.file_id is None:
@@ -235,9 +284,17 @@ class SenderClient:
         size = min(self.chunk_size, self.file_path.stat().st_size - offset)
         # read data
         loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, self._read_chunk_sync, self.file_path, offset, size)
+        data = await loop.run_in_executor(
+            None, self._read_chunk_sync, self.file_path, offset, size
+        )
         sha1 = sha1_hex(data)
-        chunk_msg = {"type": "chunk", "file_id": self.file_id, "index": idx, "sha1": sha1, "payload": data}
+        chunk_msg = {
+            "type": "chunk",
+            "file_id": self.file_id,
+            "index": idx,
+            "sha1": sha1,
+            "payload": data,
+        }
         # send
         await ws.send(pack(chunk_msg))
         # wait for ack or nack
@@ -267,6 +324,9 @@ class SenderClient:
 
 async def main_async(code: str):
     client = SenderClient(config.SERVER_URI, code)
+    if not await client.test_connection():
+        logger.error("Connection failed: {}", config.SERVER_URI)
+        return
     await client.run()
 
 
