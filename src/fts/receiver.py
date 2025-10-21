@@ -20,6 +20,7 @@ import msgpack
 import websockets
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
+from tqdm.asyncio import tqdm
 
 import config
 from common import (
@@ -80,6 +81,7 @@ async def handle_session(server_uri: str) -> None:
         # state for active file(s). We only support single file per session as spec.
         file_meta: FileMeta | None = None
         file_lock = asyncio.Lock()
+        file_pbar: dict[str, tqdm] = {}
 
         async for raw in ws:
             if not isinstance(raw, (bytes, bytearray)):
@@ -101,10 +103,13 @@ async def handle_session(server_uri: str) -> None:
                     chunks=int(msg["chunks"]),
                     received=set(),
                 )
+                logger.info("File '{}' meta received", fm.filename)
+
                 target_path = pathlib.Path(config.RECEIVE_DIR, fm.filename)
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 meta_path = target_path.with_suffix(target_path.suffix + META_SUFFIX)
                 tmp_path = target_path.with_suffix(target_path.suffix + TMP_SUFFIX)
+
                 # Check if final file exists
                 if target_path.exists():
                     await ws.send(
@@ -142,6 +147,14 @@ async def handle_session(server_uri: str) -> None:
                     missing = list(range(fm.chunks))
 
                 file_meta = fm
+                # progress bar using tqdm.asyncio
+                file_pbar[fm.file_id] = tqdm(
+                    total=fm.chunks,
+                    initial=len(fm.received),
+                    desc=f"Receiving {fm.filename}",
+                    unit="chunk",
+                )
+
                 await ws.send(
                     pack(
                         {
@@ -152,13 +165,6 @@ async def handle_session(server_uri: str) -> None:
                         }
                     )
                 )
-                logger.info(
-                    "File meta received: {} ({}/{} chunks)",
-                    file_meta.filename,
-                    len(file_meta.received),
-                    file_meta.chunks,
-                )
-
             elif t == "chunk":
                 if not file_meta:
                     logger.warning("Received chunk before meta. Ignoring.")
@@ -239,8 +245,14 @@ async def handle_session(server_uri: str) -> None:
                     pack({"type": "ack", "file_id": file_meta.file_id, "index": idx})
                 )
 
+                received_size = len(file_meta.received)
+                pbar = file_pbar.get(fm.file_id)
+                if pbar is not None:
+                    pbar.n = received_size
+                    pbar.refresh()
+
                 # check completion
-                if len(file_meta.received) >= file_meta.chunks:
+                if received_size >= file_meta.chunks:
                     # final verification
                     size_ok = (
                             tmp_path.exists() and tmp_path.stat().st_size == file_meta.size
@@ -255,6 +267,11 @@ async def handle_session(server_uri: str) -> None:
                             tmp_path.stat().st_size if tmp_path.exists() else -1,
                         )
                         continue
+
+                    pbar = file_pbar.get(fm.file_id)
+                    if pbar is not None:
+                        pbar.close()
+
                     # atomically rename tmp -> filename
                     try:
                         os.replace(tmp_path, target_path)  # atomic on most OS
@@ -285,7 +302,7 @@ async def handle_session(server_uri: str) -> None:
 
             elif t == "connection":
                 sender_address: str | None = msg.get("sender_address")
-                if sender_address is not None:
+                if sender_address is None:
                     logger.error("Sender address not exists!")
                 else:
                     logger.info("Sender connected: {}", sender_address)

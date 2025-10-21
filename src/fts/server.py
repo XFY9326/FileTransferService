@@ -213,6 +213,12 @@ class RelayServer:
                 )
                 await websocket.close()
                 return
+            if session.sender_ws is not None:
+                await websocket.send(
+                    pack({"type": "error", "message": "session is already in use"})
+                )
+                await websocket.close()
+                return
             # attach sender
             session.sender_ws = websocket
             session.last_active = now_ts()

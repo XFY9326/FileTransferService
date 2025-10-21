@@ -279,7 +279,7 @@ class SenderClient:
     async def _send_chunk_with_retries(self, ws, idx: int):
         # read chunk from file and attempt to send; wait for ack or raise error to trigger retry
         if self.file_path is None or self.file_id is None:
-            raise RuntimeError("file_path/file_id missing")
+            raise RuntimeError("file_path or file_id missing")
         offset = idx * self.chunk_size
         size = min(self.chunk_size, self.file_path.stat().st_size - offset)
         # read data

@@ -14,8 +14,8 @@ SERVER_URI: str = f"ws://localhost:{SERVER_LISTEN_PORT}"
 
 # Chunking / concurrency / flow-control
 CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", str(1 << 20)))  # 1 MiB
-MAX_IN_FLIGHT: int = int(os.getenv("MAX_IN_FLIGHT", "4"))
-QUEUE_MAXSIZE: int = int(os.getenv("QUEUE_MAXSIZE", "64"))
+MAX_IN_FLIGHT: int = int(os.getenv("MAX_IN_FLIGHT", "32"))
+QUEUE_MAXSIZE: int = int(os.getenv("QUEUE_MAXSIZE", "128"))
 
 # Session management
 SESSION_TTL_SECONDS: int = int(os.getenv("SESSION_TTL_SECONDS", str(30 * 60)))  # 30 minutes
