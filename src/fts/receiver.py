@@ -28,6 +28,7 @@ from common import (
     pack,
     sha1_hex,
     unpack,
+    set_terminal_title
 )
 
 # configure logger
@@ -76,6 +77,7 @@ async def handle_session(server_uri: str) -> None:
             logger.error("Didn't receive session assignment: {}", msg)
             return
         code = msg["code"]
+        set_terminal_title(f"FTS Receiver - {code}")
         logger.info("Assigned session code: {}. Waiting for sender...", code)
 
         # state for active file(s). We only support single file per session as spec.
@@ -300,12 +302,15 @@ async def handle_session(server_uri: str) -> None:
                             pack({"type": "error", "message": "finalize error"})
                         )
 
-            elif t == "connection":
+            elif t == "attach" or t == "detach":
                 sender_address: str | None = msg.get("sender_address")
                 if sender_address is None:
                     logger.error("Sender address not exists!")
                 else:
-                    logger.info("Sender connected: {}", sender_address)
+                    if t == "attach":
+                        logger.info("Sender connected: {}", sender_address)
+                    elif t == "detach":
+                        logger.info("Sender disconnected: {}", sender_address)
 
             elif t in ("ack", "nack", "finish", "error", "meta_response"):
                 # Normally receiver doesn't expect these from sender forwarded via server,
@@ -316,6 +321,7 @@ async def handle_session(server_uri: str) -> None:
 
 
 def main() -> None:
+    set_terminal_title("FTS Receiver")
     asyncio.run(handle_session(config.SERVER_URI))
 
 

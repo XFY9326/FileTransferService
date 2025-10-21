@@ -5,6 +5,8 @@ Shared types, dataclasses, msgpack helpers, sha1 utilities, and exceptions.
 from __future__ import annotations
 
 import hashlib
+import os
+import sys
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -28,6 +30,14 @@ def sha1_hex(data: bytes) -> str:
     h = hashlib.sha1()
     h.update(data)
     return h.hexdigest()
+
+
+def set_terminal_title(title: str) -> None:
+    if os.name == "nt":  # Windows
+        os.system(f"title {title}")
+    else:  # Linux / macOS
+        sys.stdout.write(f"\33]0;{title}\a")
+        sys.stdout.flush()
 
 
 # ---------- MsgPack helpers ----------

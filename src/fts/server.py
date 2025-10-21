@@ -191,6 +191,7 @@ class RelayServer:
                     s = self.sessions.pop(code)
                     # close sender if exists
                     if s.sender_ws:
+                        await s.sender_ws.send(pack({"type": "terminate", "reason": "Receiver disconnected"}))
                         # noinspection PyBroadException
                         try:
                             await s.sender_ws.close()
@@ -226,10 +227,10 @@ class RelayServer:
                 "Sender {} attached to session {}", websocket.remote_address, code
             )
 
-        receiver = session.receiver_ws
-        await receiver.send(
-            pack({"type": "connection", "sender_address": websocket.remote_address})
-        )
+        if session.receiver_ws:
+            await session.receiver_ws.send(
+                pack({"type": "attach", "sender_address": websocket.remote_address})
+            )
 
         # notify both sides we have matched? optional
         try:
@@ -239,7 +240,10 @@ class RelayServer:
                     continue
                 session.last_active = now_ts()
                 try:
-                    await receiver.send(raw)
+                    if session.receiver_ws:
+                        await session.receiver_ws.send(raw)
+                    elif session.sender_ws:
+                        await session.sender_ws.send(pack({"type": "terminate", "reason": "Receiver not found"}))
                 except Exception as e:
                     logger.exception(
                         "Failed to forward sender->receiver for {}: {}", code, e
@@ -252,6 +256,10 @@ class RelayServer:
                 s = self.sessions.get(code)
                 if s:
                     s.sender_ws = None
+                    if s.receiver_ws:
+                        await s.receiver_ws.send(
+                            pack({"type": "detach", "sender_address": websocket.remote_address})
+                        )
                     # if receiver still connected we leave session for TTL
             logger.info("Sender detached from {}", code)
 

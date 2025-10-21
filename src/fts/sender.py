@@ -20,13 +20,14 @@ import sys
 import uuid
 from typing import Dict, Set
 
+import aiofiles
 import websockets
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm.asyncio import tqdm
 
 import config
-from common import pack, sha1_hex, unpack
+from common import pack, sha1_hex, unpack, set_terminal_title
 
 # configure logger
 logger.remove()
@@ -141,8 +142,8 @@ class SenderClient:
                 listener_task = asyncio.create_task(self._listener(ws))
                 producer_task = asyncio.create_task(self._producer())
                 workers = [
-                    asyncio.create_task(self._worker(ws, i))
-                    for i in range(config.MAX_IN_FLIGHT)
+                    asyncio.create_task(self._worker(ws))
+                    for _ in range(config.MAX_IN_FLIGHT)
                 ]
 
                 # progress bar using tqdm.asyncio
@@ -245,6 +246,9 @@ class SenderClient:
                     logger.info("Received finish: {}", msg)
                 elif t == "error":
                     logger.error("Received error: {}", msg)
+                elif t == "terminate":
+                    logger.error("Terminate due to: {}", msg["reason"])
+                    exit(1)
                 elif t == "meta_response":
                     # already handled upstream, ignore
                     pass
@@ -255,7 +259,7 @@ class SenderClient:
         except Exception as e:
             logger.exception("Listener exception: {}", e)
 
-    async def _worker(self, ws: websockets.ClientConnection, worker_id: int):
+    async def _worker(self, ws: websockets.ClientConnection):
         try:
             while True:
                 idx = await self.send_queue.get()
@@ -283,10 +287,7 @@ class SenderClient:
         offset = idx * self.chunk_size
         size = min(self.chunk_size, self.file_path.stat().st_size - offset)
         # read data
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(
-            None, self._read_chunk_sync, self.file_path, offset, size
-        )
+        data = await self._read_chunk(self.file_path, offset, size)
         sha1 = sha1_hex(data)
         chunk_msg = {
             "type": "chunk",
@@ -316,10 +317,10 @@ class SenderClient:
         # else success
 
     @staticmethod
-    def _read_chunk_sync(path: pathlib.Path, offset: int, size: int) -> bytes:
-        with open(path, "rb") as f:
-            f.seek(offset)
-            return f.read(size)
+    async def _read_chunk(path: pathlib.Path, offset: int, size: int) -> bytes:
+        async with aiofiles.open(path, "r+b") as f:
+            await f.seek(offset)
+            return await f.read(size)
 
 
 async def main_async(code: str):
@@ -331,7 +332,9 @@ async def main_async(code: str):
 
 
 def main():
+    set_terminal_title("FTS Sender")
     code = input("Enter 4 digit code: ").strip()
+    set_terminal_title(f"FTS Receiver - {code}")
     asyncio.run(main_async(code))
 
 
