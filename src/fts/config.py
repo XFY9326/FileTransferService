@@ -13,7 +13,7 @@ SERVER_LISTEN_PORT: int = int(os.getenv("SERVER_PORT", "8765"))
 SERVER_URI: str = f"ws://localhost:{SERVER_LISTEN_PORT}"
 
 # Chunking / concurrency / flow-control
-CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", str(2 << 20)))  # 2 MiB
+CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", str(1 << 20)))  # 1 MiB
 MAX_IN_FLIGHT: int = int(os.getenv("MAX_IN_FLIGHT", "16"))
 QUEUE_MAXSIZE: int = int(os.getenv("QUEUE_MAXSIZE", "32"))
 

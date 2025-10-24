@@ -149,6 +149,7 @@ class SenderClient:
                 # progress bar using tqdm.asyncio
                 pbar = tqdm(
                     total=len(self.chunks_to_send),
+                    ascii=True,
                     desc=f"Sending {p.name}",
                     unit="chunk",
                 )
@@ -334,7 +335,7 @@ async def main_async(code: str):
 def main():
     set_terminal_title("FTS Sender")
     code = input("Enter 4 digit code: ").strip()
-    set_terminal_title(f"FTS Receiver - {code}")
+    set_terminal_title(f"FTS Sender - {code}")
     asyncio.run(main_async(code))
 
 

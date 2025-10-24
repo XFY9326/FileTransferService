@@ -153,6 +153,7 @@ async def handle_session(server_uri: str) -> None:
                 file_pbar[fm.file_id] = tqdm(
                     total=fm.chunks,
                     initial=len(fm.received),
+                    ascii=True,
                     desc=f"Receiving {fm.filename}",
                     unit="chunk",
                 )
